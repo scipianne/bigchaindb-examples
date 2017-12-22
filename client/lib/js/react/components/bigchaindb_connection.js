@@ -4,6 +4,7 @@ import { safeInvoke, safeMerge } from 'js-utility-belt/es6';
 
 import AssetStore from '../stores/asset_store';
 import AccountStore from '../stores/account_store';
+import SimpleStore from '../stores/simple_store';
 
 
 export default function BigchainDBConnection(Component) {
@@ -13,6 +14,7 @@ export default function BigchainDBConnection(Component) {
         getInitialState() {
             const accountStore = AccountStore.getState();
             const assetStore = AssetStore.getState();
+            const simpleStore = SimpleStore.getState();
 
             return safeMerge(
                 {
@@ -20,7 +22,8 @@ export default function BigchainDBConnection(Component) {
                     activeAsset: null
                 },
                 accountStore,
-                assetStore
+                assetStore,
+                simpleStore
             );
         },
 
@@ -82,6 +85,24 @@ export default function BigchainDBConnection(Component) {
             this.handleAccountChange(null);
         },
 
+        handleLogInClick(user, password) {
+            if (this.refs.component) {
+                safeInvoke(this.refs.component.authorization, {
+                    'user': user,
+                    'password': password
+                });
+            }
+        },
+
+        handleLogOutClick() {
+            if (this.refs.component) {
+                safeInvoke(this.refs.component.authorization, {
+                    'user': "-",
+                    'password': "-"
+                });
+            }
+        },
+
         render() {
             return (
                 <Component
@@ -89,7 +110,9 @@ export default function BigchainDBConnection(Component) {
                     {...this.state}
                     handleAccountChange={this.handleAccountChange}
                     handleAssetChange={this.handleAssetChange}
-                    resetActiveAccount={this.resetActiveAccount} />
+                    resetActiveAccount={this.resetActiveAccount}
+                    handleLogInClick={this.handleLogInClick}
+                    handleLogOutClick={this.handleLogOutClick} />
             );
         }
     });

@@ -67,5 +67,65 @@ APPS = [
                 'content': x
             }
         )
-    }
+    },
+    {
+        'name': 'different_users',
+        'accounts': [
+            {
+                'name': 'admin',
+                'ledgers': [
+                    {
+                        'id': 0,
+                        'num_assets': 2
+                    },
+                    {
+                        'id': 0,
+                        'num_assets': 4
+                    }
+                ]
+            },
+            {
+                'name': 'account1',
+                'ledgers': [
+                    {
+                        'id': 0,
+                        'num_assets': 1
+                    }
+                ]
+            },
+            {
+                'name': 'account2',
+                'ledgers': [
+                    {
+                        'id': 0,
+                        'num_assets': 2
+                    },
+                ]
+            },
+            {
+                'name': 'account3',
+                'ledgers': [
+                    {
+                        'id': 0,
+                        'num_assets': 3
+                    },
+                ]
+            },
+            {
+                'name': 'account4',
+                'ledgers': [
+                    {
+                        'id': 0,
+                        'num_assets': 4
+                    },
+                ]
+            }
+        ],
+        'payload_func': (
+            lambda x: {
+                'app': 'different_users',
+                'content': x,
+            }
+        )
+    },
 ]

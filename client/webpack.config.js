@@ -19,6 +19,7 @@ const PATHS = {
     ON_THE_RECORD: path.resolve(__dirname, 'on_the_record/js/app.js'),
     SHARE_TRADER: path.resolve(__dirname, 'share_trader/js/app.js'),
     INTERLEDGER: path.resolve(__dirname, 'interledger/js/app.js'),
+    DIFFERENT_USERS: path.resolve(__dirname, 'different_users/js/app.js'),
 
     BUILD: path.resolve(__dirname, 'build'),
     DIST: path.resolve(__dirname, 'dist'),
@@ -32,12 +33,14 @@ const ENTRY = {
     ontherecord: PATHS.ON_THE_RECORD,
     sharetrader: PATHS.SHARE_TRADER,
     interledger: PATHS.INTERLEDGER,
+    different_users: PATHS.DIFFERENT_USERS,
 };
 
 const ENTRY_NAMES = {
     ontherecord: 'On the Record',
     sharetrader: 'Share Trader',
     interledger: 'Interledger',
+    different_users: 'Different Users',
 };
 
 

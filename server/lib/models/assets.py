@@ -1,5 +1,7 @@
 from time import sleep
 from datetime import datetime
+import logging
+import os
 
 import rethinkdb as r
 
@@ -9,6 +11,9 @@ from decorator import contextmanager
 import bigchaindb
 import bigchaindb.util
 import bigchaindb.crypto
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -80,16 +85,18 @@ def get_assets(bigchain, search):
 
 
 def create_asset(bigchain, to, payload):
-    # a create transaction uses the operation `CREATE` and has no inputs
-    tx = bigchain.create_transaction(bigchain.me, to, None, 'CREATE', payload=payload)
+    if account_enabled_for(bigchain, to):
+        # a create transaction uses the operation `CREATE` and has no inputs
+        tx = bigchain.create_transaction(bigchain.me, to, None, 'CREATE', payload=payload)
 
-    # all transactions need to be signed by the user creating the transaction
-    tx_signed = bigchain.sign_transaction(tx, bigchain.me_private)
+        # all transactions need to be signed by the user creating the transaction
+        tx_signed = bigchain.sign_transaction(tx, bigchain.me_private)
 
-    bigchain.validate_transaction(tx_signed)
-    # write the transaction to the bigchain
-    bigchain.write_transaction(tx_signed)
-    return tx_signed
+        bigchain.validate_transaction(tx_signed)
+        # write the transaction to the bigchain
+        bigchain.write_transaction(tx_signed)
+        return tx_signed
+    return None
 
 
 def create_asset_hashlock(bigchain, payload, secret):
@@ -121,112 +128,118 @@ def create_asset_hashlock(bigchain, payload, secret):
 
 
 def transfer_asset(bigchain, source, to, asset_id, sk):
-    asset = bigchain.get_transaction(asset_id['txid'])
-    asset_transfer = bigchain.create_transaction(source, to, asset_id, 'TRANSFER',
-                                                 payload=asset['transaction']['data']['payload'])
-    asset_transfer_signed = bigchain.sign_transaction(asset_transfer, sk)
-    bigchain.validate_transaction(asset_transfer_signed)
-    bigchain.write_transaction(asset_transfer_signed)
-    return asset_transfer_signed
+    if asset_enabled_for(bigchain, asset_id):
+        asset = bigchain.get_transaction(asset_id['txid'])
+        asset_transfer = bigchain.create_transaction(source, to, asset_id, 'TRANSFER',
+                                                     payload=asset['transaction']['data']['payload'])
+        asset_transfer_signed = bigchain.sign_transaction(asset_transfer, sk)
+        bigchain.validate_transaction(asset_transfer_signed)
+        bigchain.write_transaction(asset_transfer_signed)
+        return asset_transfer_signed
+    return None
 
 
 def escrow_asset(bigchain, source, to, asset_id, sk,
                  expires_at=None, ilp_header=None, execution_condition=None):
-    asset = bigchain.get_transaction(asset_id['txid'])
-    payload = asset['transaction']['data']['payload'].copy()
-    if ilp_header:
-        payload.update({'ilp_header': ilp_header})
+    if asset_enabled_for(bigchain, asset_id):
+        asset = bigchain.get_transaction(asset_id['txid'])
+        payload = asset['transaction']['data']['payload'].copy()
+        if ilp_header:
+            payload.update({'ilp_header': ilp_header})
 
-    # Create escrow template with the execute and abort address
-    asset_escrow = bigchain.create_transaction(source, [source, to], asset_id, 'TRANSFER',
-                                               payload=payload)
-    if not expires_at:
-        # Set expiry time (100 secs from now)
-        time_sleep = 100
-        expires_at = float(bigchaindb.util.timestamp()) + time_sleep
+        # Create escrow template with the execute and abort address
+        asset_escrow = bigchain.create_transaction(source, [source, to], asset_id, 'TRANSFER',
+                                                   payload=payload)
+        if not expires_at:
+            # Set expiry time (100 secs from now)
+            time_sleep = 100
+            expires_at = float(bigchaindb.util.timestamp()) + time_sleep
 
-    # Create escrow and timeout condition
-    condition_escrow = cc.ThresholdSha256Fulfillment(threshold=1)  # OR Gate
-    condition_timeout = cc.TimeoutFulfillment(expire_time=str(expires_at))  # only valid if now() <= time_expire
-    condition_timeout_inverted = cc.InvertedThresholdSha256Fulfillment(threshold=1)
-    condition_timeout_inverted.add_subfulfillment(condition_timeout)
+        # Create escrow and timeout condition
+        condition_escrow = cc.ThresholdSha256Fulfillment(threshold=1)  # OR Gate
+        condition_timeout = cc.TimeoutFulfillment(expire_time=str(expires_at))  # only valid if now() <= time_expire
+        condition_timeout_inverted = cc.InvertedThresholdSha256Fulfillment(threshold=1)
+        condition_timeout_inverted.add_subfulfillment(condition_timeout)
 
-    # Create execute branch
-    execution_threshold = 3 if execution_condition else 2
-    condition_execute = cc.ThresholdSha256Fulfillment(threshold=execution_threshold)  # AND gate
-    condition_execute.add_subfulfillment(cc.Ed25519Fulfillment(public_key=to))  # execute address
-    condition_execute.add_subfulfillment(condition_timeout)  # federation checks on expiry
-    if execution_condition:
-        condition_execute.add_subcondition_uri(execution_condition)
-    condition_escrow.add_subfulfillment(condition_execute)
+        # Create execute branch
+        execution_threshold = 3 if execution_condition else 2
+        condition_execute = cc.ThresholdSha256Fulfillment(threshold=execution_threshold)  # AND gate
+        condition_execute.add_subfulfillment(cc.Ed25519Fulfillment(public_key=to))  # execute address
+        condition_execute.add_subfulfillment(condition_timeout)  # federation checks on expiry
+        if execution_condition:
+            condition_execute.add_subcondition_uri(execution_condition)
+        condition_escrow.add_subfulfillment(condition_execute)
 
-    # Create abort branch
-    condition_abort = cc.ThresholdSha256Fulfillment(threshold=2)  # AND gate
-    condition_abort.add_subfulfillment(cc.Ed25519Fulfillment(public_key=source))  # abort address
-    condition_abort.add_subfulfillment(condition_timeout_inverted)
-    condition_escrow.add_subfulfillment(condition_abort)
+        # Create abort branch
+        condition_abort = cc.ThresholdSha256Fulfillment(threshold=2)  # AND gate
+        condition_abort.add_subfulfillment(cc.Ed25519Fulfillment(public_key=source))  # abort address
+        condition_abort.add_subfulfillment(condition_timeout_inverted)
+        condition_escrow.add_subfulfillment(condition_abort)
 
-    # Update the condition in the newly created transaction
-    asset_escrow['transaction']['conditions'][0]['condition'] = {
-        'details': condition_escrow.to_dict(),
-        'uri': condition_escrow.condition.serialize_uri()
-    }
+        # Update the condition in the newly created transaction
+        asset_escrow['transaction']['conditions'][0]['condition'] = {
+            'details': condition_escrow.to_dict(),
+            'uri': condition_escrow.condition.serialize_uri()
+        }
 
-    # conditions have been updated, so hash needs updating
-    asset_escrow['id'] = bigchaindb.util.get_hash_data(asset_escrow)
+        # conditions have been updated, so hash needs updating
+        asset_escrow['id'] = bigchaindb.util.get_hash_data(asset_escrow)
 
-    # sign transaction
-    asset_escrow_signed = bigchaindb.util.sign_tx(asset_escrow, sk, bigchain=bigchain)
-    bigchain.write_transaction(asset_escrow_signed)
-    return asset_escrow_signed
+        # sign transaction
+        asset_escrow_signed = bigchaindb.util.sign_tx(asset_escrow, sk, bigchain=bigchain)
+        bigchain.write_transaction(asset_escrow_signed)
+        return asset_escrow_signed
+    return None
 
 
 def fulfill_escrow_asset(bigchain, source, to, asset_id, sk, execution_fulfillment=None):
-    asset = bigchain.get_transaction(asset_id['txid'])
-    asset_owners = asset['transaction']['conditions'][asset_id['cid']]['new_owners']
+    if asset_enabled_for(bigchain, asset_id):
+        asset = bigchain.get_transaction(asset_id['txid'])
+        asset_owners = asset['transaction']['conditions'][asset_id['cid']]['new_owners']
 
-    other_owner = [owner for owner in asset_owners if not owner == source][0]
+        other_owner = [owner for owner in asset_owners if not owner == source][0]
 
-    # Create a base template for fulfill transaction
-    asset_escrow_fulfill = bigchain.create_transaction(asset_owners, to, asset_id, 'TRANSFER',
-                                                       payload=asset['transaction']['data']['payload'])
+        # Create a base template for fulfill transaction
+        asset_escrow_fulfill = bigchain.create_transaction(asset_owners, to, asset_id, 'TRANSFER',
+                                                           payload=asset['transaction']['data']['payload'])
 
-    # Parse the threshold cryptocondition
-    escrow_fulfillment = cc.Fulfillment.from_dict(
-        asset['transaction']['conditions'][0]['condition']['details'])
+        # Parse the threshold cryptocondition
+        escrow_fulfillment = cc.Fulfillment.from_dict(
+            asset['transaction']['conditions'][0]['condition']['details'])
 
-    # Get the fulfillment message to sign
-    tx_escrow_execute_fulfillment_message = \
-        bigchaindb.util.get_fulfillment_message(asset_escrow_fulfill,
-                                                asset_escrow_fulfill['transaction']['fulfillments'][0],
-                                                serialized=True)
+        # Get the fulfillment message to sign
+        tx_escrow_execute_fulfillment_message = \
+            bigchaindb.util.get_fulfillment_message(asset_escrow_fulfill,
+                                                    asset_escrow_fulfill['transaction']['fulfillments'][0],
+                                                    serialized=True)
 
-    # get the indices path for the source that wants to fulfill
-    _, indices = get_subcondition_indices_from_vk(escrow_fulfillment, source)
-    subfulfillment_source = escrow_fulfillment
-    for index in indices:
-        subfulfillment_source = subfulfillment_source.subconditions[index]['body']
+        # get the indices path for the source that wants to fulfill
+        _, indices = get_subcondition_indices_from_vk(escrow_fulfillment, source)
+        subfulfillment_source = escrow_fulfillment
+        for index in indices:
+            subfulfillment_source = subfulfillment_source.subconditions[index]['body']
 
-    # sign the fulfillment
-    subfulfillment_source.sign(tx_escrow_execute_fulfillment_message, bigchaindb.crypto.SigningKey(sk))
+        # sign the fulfillment
+        subfulfillment_source.sign(tx_escrow_execute_fulfillment_message, bigchaindb.crypto.SigningKey(sk))
 
-    # get the indices path for the other source that delivers the condition
-    _, indices = get_subcondition_indices_from_vk(escrow_fulfillment, other_owner)
-    subfulfillment_other = escrow_fulfillment.subconditions[indices[0]]['body']
+        # get the indices path for the other source that delivers the condition
+        _, indices = get_subcondition_indices_from_vk(escrow_fulfillment, other_owner)
+        subfulfillment_other = escrow_fulfillment.subconditions[indices[0]]['body']
 
-    # update the condition
-    del escrow_fulfillment.subconditions[indices[0]]
-    escrow_fulfillment.add_subcondition(subfulfillment_other.condition)
+        # update the condition
+        del escrow_fulfillment.subconditions[indices[0]]
+        escrow_fulfillment.add_subcondition(subfulfillment_other.condition)
 
-    if execution_fulfillment:
-        _, indices = get_subcondition_indices_from_type(escrow_fulfillment, cc.PreimageSha256Fulfillment.TYPE_ID)
-        del escrow_fulfillment.subconditions[indices[0]]['body'].subconditions[indices[1]]
-        escrow_fulfillment.subconditions[indices[0]]['body'].add_subfulfillment_uri(execution_fulfillment)
+        if execution_fulfillment:
+            _, indices = get_subcondition_indices_from_type(escrow_fulfillment, cc.PreimageSha256Fulfillment.TYPE_ID)
+            del escrow_fulfillment.subconditions[indices[0]]['body'].subconditions[indices[1]]
+            escrow_fulfillment.subconditions[indices[0]]['body'].add_subfulfillment_uri(execution_fulfillment)
 
-    asset_escrow_fulfill['transaction']['fulfillments'][0]['fulfillment'] = escrow_fulfillment.serialize_uri()
+        asset_escrow_fulfill['transaction']['fulfillments'][0]['fulfillment'] = escrow_fulfillment.serialize_uri()
 
-    bigchain.write_transaction(asset_escrow_fulfill)
-    return asset_escrow_fulfill
+        bigchain.write_transaction(asset_escrow_fulfill)
+        return asset_escrow_fulfill
+        return None
 
 
 def get_subcondition_indices_from_vk(condition, vk):
@@ -266,3 +279,39 @@ def get_subcondition_indices_from_type(condition, type_id):
                 indices += index
                 break
     return conditions, indices
+
+
+def asset_enabled_for(bigchain, asset_id):
+    asset = bigchain.get_transaction(asset_id['txid'])
+    asset_owner = asset['transaction']['conditions'][asset_id['cid']]['new_owners'][0]
+
+    return account_enabled_for(bigchain, asset_owner)
+
+
+def account_enabled_for(bigchain, account):
+    user = os.environ.get('USER', '1')
+
+    if user == '-':
+        return False
+    user = int(user)
+
+    admin_accounts = list(r.db('different_users').table('accounts') \
+                          .filter(lambda account: (account['name'] == 'admin')).run(bigchain.conn))
+
+    admin_assets = get_owned_assets(bigchain, admin_accounts[0]['vk'])
+
+    account_asset, user_asset = 0, 0
+
+    for asset in admin_assets:
+        if asset['transaction']['data']['payload']['content']['asset_name'] == account:
+            account_asset = asset
+        if asset['transaction']['data']['payload']['content']['asset_name'] == 'user{}'.format(user):
+            user_asset = asset
+
+    if account_asset == 0 or user_asset == 0:
+        return False
+
+    if not user_asset['id'] in account_asset['transaction']['data']['payload']['content']['authorized'].values():
+        return False
+
+    return True

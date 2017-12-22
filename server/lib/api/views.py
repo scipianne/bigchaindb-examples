@@ -4,17 +4,27 @@ For more information please refer to the documentation in Apiary:
  - http://docs.bigchaindb.apiary.io/
 """
 import os
+import hashlib
 
 import flask
-from flask import request, Blueprint
+from flask import (
+    request, Blueprint
+)
+
 
 from server.config_bigchaindb import get_bigchain
 from server.lib.models import accounts
 from server.lib.models import assets
 
+
 api_views = Blueprint('api_views', __name__)
 
 bigchain = get_bigchain(ledger_id=os.environ.get('BIGCHAINDB_LEDGER_NUMBER'))
+
+password_hash_dict = {
+    '0':'1f489582f7ea4c208b70219a2bb6a322227a7516630530a10ed7f2710cfbe447',
+    '1':'0b14d501a594442a01c6859541bcb3e8164d183d32937b851835442f69d5c94e',
+}
 
 
 @api_views.route('/accounts/')
@@ -66,7 +76,9 @@ def post_asset():
                              to=to,
                              payload=json_payload)
 
-    return flask.jsonify(**tx)
+    if tx:
+        return flask.jsonify(**tx)
+    return flask.jsonify()
 
 
 @api_views.route('/assets/<asset_id>/<cid>/transfer/', methods=['POST'])
@@ -84,7 +96,9 @@ def transfer_asset(asset_id, cid):
                                },
                                sk=source['sk'])
 
-    return flask.jsonify(**tx)
+    if tx:
+        return flask.jsonify(**tx)
+    return flask.jsonify()
 
 
 @api_views.route('/assets/<asset_id>/<cid>/escrow/', methods=['POST'])
@@ -108,7 +122,9 @@ def escrow_asset(asset_id, cid):
                              ilp_header=ilp_header,
                              execution_condition=execution_condition)
 
-    return flask.jsonify(**tx)
+    if tx:
+        return flask.jsonify(**tx)
+    return flask.jsonify()
 
 
 @api_views.route('/assets/<asset_id>/<cid>/escrow/fulfill/', methods=['POST'])
@@ -129,4 +145,21 @@ def fulfill_escrow_asset(asset_id, cid):
                                      sk=source['sk'],
                                      execution_fulfillment=execution_fulfillment)
 
-    return flask.jsonify(**tx)
+    if tx:
+        return flask.jsonify(**tx)
+    return flask.jsonify()
+
+
+@api_views.route('/authorize/', methods=['POST'])
+def post_password():
+    json = request.get_json(force=True)
+
+    if 'password' in json and 'user' in json:
+        user = json['user']
+        password = json['password'].strip().encode('utf-8')
+        password_hash = hashlib.sha256(password).hexdigest()
+
+        if user == "-" or (user in password_hash_dict.keys() and password_hash == password_hash_dict[user]):
+            os.environ['USER'] = user
+
+    return flask.jsonify()

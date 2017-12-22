@@ -108,7 +108,7 @@ def get_ledger_ids_from_config(config):
     # read the config file and return all ledger ids
     ledger_ids = []
     for app in config:
-        if app['name'] != 'interledger':
+        if app['name'] != 'interledger' and app['name'] != 'different_users':
             ledger_ids.append(app['ledger'])
         else:
             for account in app['accounts']:
@@ -151,7 +151,7 @@ def run_init_accounts(args):
 
 
 def run_reset_accounts(args):
-    delete_databases(['interledger', 'ontherecord', 'sharetrader'])
+    delete_databases(['different_users', 'interledger', 'ontherecord', 'sharetrader'])
 
 
 def run_init_assets(args):

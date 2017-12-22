@@ -8,7 +8,7 @@ import moment from 'moment';
 const AssetDetail = React.createClass({
     propTypes: {
         asset: React.PropTypes.object.isRequired,
-        assetContent: React.PropTypes.string,
+        assetContent: React.PropTypes.object,
         children: React.PropTypes.node,
         className: React.PropTypes.string,
         inBacklog: React.PropTypes.bool,
@@ -25,8 +25,17 @@ const AssetDetail = React.createClass({
             return assetContent;
         }
         // TODO: Validate
+        const { data: { payload: { content: { authorized } } } = {} } = asset.transaction;
+        if (authorized) {
+            return authorized;
+        }
+
         const { data: { payload: { content } } = {} } = asset.transaction;
-        return content || '-';
+        if (content) {
+            return content;
+        }
+
+        return '-';
     },
 
     render() {

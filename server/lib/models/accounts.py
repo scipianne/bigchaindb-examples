@@ -5,12 +5,13 @@ from .assets import transfer_asset
 
 
 class Account:
-    def __init__(self, bigchain, name, ledger, db):
+    def __init__(self, bigchain, name, ledger, db, authorized=None):
         self.bigchain = bigchain
         self.db = db
         self.name = name
         self.sk, self.vk = bigchaindb.crypto.generate_key_pair()
         self.ledger = ledger
+        self.authorized = authorized
         self.save()
 
     @property
